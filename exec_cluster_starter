@@ -1,5 +1,19 @@
 #!/bin/bash
 #
+# Copyright (c) 1995-2015 Remsnet Consulting & Internet Services LTD
+# Author:  Remsnet LTD Support <support at remsnet dot de>
+#
+# All modifications and additions to the file contributed by third parties
+# remain the property of their copyright owners, unless otherwise agreed
+# upon. The license for this file, and modifications and additions to the
+# file, is the same license as for the pristine package itself (unless the
+# license for the pristine package is not an Open Source License, in which
+# case the license is the MIT License). An "Open Source License" is a
+# license that conforms to the Open Source Definition (Version 1.9)
+# published by the Open Source Initiative.
+# Please submit bugfixes or comments via https://github.com/remsnet/mysql_ndb_cluster_helper
+
+
 ### BEGIN INIT INFO
 # Provides:          mysql ndb ndbd
 # Required-Start:    $remote_fs $syslog $time
@@ -37,10 +51,10 @@ start_mgmd)
         start_ndb_mgmd
         ;;
 start_ndb)
-        start_mysqld
+        start_ndbd
         ;;
 start_mysql)
-        start_ndbd
+        start_mysqld
         ;;
 *)      echo "Usage: $0 {start_mgmd|start_ndb_4|start_ndb_5|start_mysql_5|start_mysql_5}"
         ;;
