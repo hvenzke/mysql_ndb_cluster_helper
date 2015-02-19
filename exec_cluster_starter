@@ -1,0 +1,48 @@
+#!/bin/bash
+#
+### BEGIN INIT INFO
+# Provides:          mysql ndb ndbd
+# Required-Start:    $remote_fs $syslog $time
+# Required-Stop:     $remote_fs $syslog $time
+# Should-Start:      $network
+# Should-Stop:       $network
+# Default-Start:      3
+# Default-Stop:     2 4 5
+# Short-Description: Regular background program processing daemon
+# Description:        mys2ql cluster
+### END INIT INFO
+
+PATH=$PATH:/usr/local/mysql
+
+test -x /bin/bash || echo " $0 usage require /bin/bash "
+
+function start_ndb_mgmd {
+        #
+        su - mysql -c 'cd /usr/local/mysql/mysql-cluster; /usr/local/mysql/mysql-cluster/start_mgmd.sh'
+}
+
+function start_mysqld {
+        #
+        su - mysql -c 'cd /usr/local/mysql/mysql-cluster; /usr/local/mysql/mysql-cluster/start_mysqld.sh'
+}
+
+function start_ndbd {
+        #
+        su - mysql -c 'cd /usr/local/mysql/mysql-cluster; /usr/local/mysql/mysql-cluster/start_ndbd.sh'
+}
+
+
+case "$1" in
+start_mgmd)
+        start_ndb_mgmd
+        ;;
+start_ndb)
+        start_mysqld
+        ;;
+start_mysql)
+        start_ndbd
+        ;;
+*)      echo "Usage: $0 {start_mgmd|start_ndb_4|start_ndb_5|start_mysql_5|start_mysql_5}"
+        ;;
+esac
+exit 0
