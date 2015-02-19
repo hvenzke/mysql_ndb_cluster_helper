@@ -1,0 +1,271 @@
+root@mysql1:extra# cat ./check_ndbd_procs
+#!/bin/bash
+#
+#
+# Copyright (c) 1995-2015 Remsnet Consulting & Internet Services LTD
+# Author:  Remsnet LTD Support <support at remsnet dot de>
+#
+# All modifications and additions to the file contributed by third parties
+# remain the property of their copyright owners, unless otherwise agreed
+# upon. The license for this file, and modifications and additions to the
+# file, is the same license as for the pristine package itself (unless the
+# license for the pristine package is not an Open Source License, in which
+# case the license is the MIT License). An "Open Source License" is a
+# license that conforms to the Open Source Definition (Version 1.9)
+# published by the Open Source Initiative.
+# Please submit bugfixes or comments via https://github.com/remsnet/
+
+### BEGIN INIT INFO
+# Provides:          mysql ndb ndbd process monitoring stuff
+# Required-Start:    $remote_fs $syslog $time
+# Required-Stop:     $remote_fs $syslog $time
+# Should-Start:      $network
+# Should-Stop:       $network
+# Default-Start:      3
+# Default-Stop:     1 2 4 5 6
+# Short-Description: Regular background program processing daemon
+# Description:        mysql NDB cluster Process scripts
+### END INIT INFO
+
+PATH=$PATH:/usr/local/mysql
+
+test -x /bin/bash || echo " $0 usage require /bin/bash "
+
+#--------------------------------------
+function start_ndb_mgmd {
+        #
+        su - mysql -c 'cd /usr/local/mysql/mysql-cluster; /usr/local/mysql/mysql-cluster/start_mgmd.sh'
+}
+
+function start_mysqld {
+        #
+        su - mysql -c 'cd /usr/local/mysql/mysql-cluster; /usr/local/mysql/mysql-cluster/start_mysqld.sh'
+}
+
+function start_ndbd {
+        #
+        su - mysql -c 'cd /usr/local/mysql/mysql-cluster; /usr/local/mysql/mysql-cluster/start_ndbd.sh'
+}
+
+#--------------------------------------
+
+function check_proc_mysqld {
+        /bin/ps axwo 'comm '| grep -w mysqld | wc -l
+}
+
+function check_proc_ndbd {
+        /bin/ps axwo 'comm '| grep -w ndbd | wc -l
+}
+
+function check_proc_ndb_mgmd {
+        /bin/ps axwo 'comm '| grep -w ndb_mgmd | wc -l
+}
+function check_pid_ndbd {
+        /bin/ps axwo 'comm '| grep -w ndb_mgmd | wc -l
+}
+
+function check_pid_mysqld {
+        /bin/ps axwo 'pid comm'| egrep -w '(mysqld|mysqld-debug|mysqld_multi|mysqld_safe)' | awk '{ print $1 }'
+}
+function check_pid_ndb_mgmd {
+        /bin/ps axwo 'pid comm'| grep -w ndb_mgmd | awk '{ print $1 }' | xargs
+}
+
+
+#--------------------------------------
+
+function stop_mysqld {
+        echo ""
+ for i in `check_pid_mysqld`
+ do
+ echo Stopping mysqld
+ echo SIGHUP on Mysqld pid $i
+ kill -15 $i
+done
+
+}
+
+function stop_ndbd {
+        echo ""
+for i in `check_pid_ndbd`
+ do
+ echo Stopping ndbd
+ echo SIGHUP on nbd pid $i
+ kill -15 $i
+done
+
+}
+
+
+#--------------------------------------
+function check_ndbd {
+        #
+        NDBD_PROCS=`check_proc_ndbd`
+        echo NDBD_PROCS $NDBD_PROCS
+        echo " "
+}
+
+function check_mysqld {
+        #
+        MYSQLD_PROCS=`check_proc_mysqld`
+        echo MYSQLD_PROCS $MYSQLD_PROCS
+        echo " "
+}
+
+#--------------------------------------
+
+
+function restart_mysqld {
+        echo ""
+        stop_mysqld
+        #
+        sleep 3
+        start_mysqld
+}
+
+function restart_ndbd {
+        echo ""
+        stop_ndbd
+        #
+        sleep 3
+        stop_ndbd
+
+}
+
+
+#--------------------------------------
+# sendmail
+#http://www.zedwood.com/article/bash-linux-sendmail-script
+
+function fappend {
+    echo "$2">>$1;
+}
+
+function send_mail {
+
+YYYYMMDD=`date +%Y%m%d`
+
+# CHANGE THESE
+HOST=`hostname`
+TOEMAIL="recipient@domain.ltd";
+FREMAIL="crondaemon@$HOST";
+SUBJECT="Daily Backup - $YYYYMMDD";
+MSGBODY="NDB SERVER Allert Notice - $HOST - $YYYYMMDD ";
+
+# DON'T CHANGE ANYTHING BELOW
+TMP=`mktemp`
+
+rm -rf $TMP;
+fappend $TMP "From: $FREMAIL";
+fappend $TMP "To: $TOEMAIL";
+fappend $TMP "Reply-To: $FREMAIL";
+fappend $TMP "Subject: $SUBJECT";
+fappend $TMP "";
+fappend $TMP "$MSGBODY";
+fappend $TMP "";
+fappend $TMP "";
+cat $TMP|sendmail -t;
+rm $TMP;
+}
+
+#--------------------------------------
+
+case "$1" in
+start_mgmd)
+        start_ndb_mgmd
+        ;;
+start_ndbd)
+        start_ndbd
+        ;;
+start_mysqld)
+        start_mysqld
+        ;;
+stop_mgmd)
+        stop_ndb_mgmd
+        ;;
+stop_ndbd)
+        stop_ndbd
+        ;;
+stop_mysqld)
+        stop_mysqld
+        ;;
+restart_mgmd)
+        $0 stop_ndb_mgmd
+        sleep 5
+        $0 start_ndb_mgmd
+        ;;
+restart_ndbd)
+        restart_ndbd
+        ;;
+restart_mysqld)
+        restart_mysqld
+        ;;
+#
+# Main Funtion of this script helper : run by cron all 15min.
+cronchecks)
+        # simple process check - if no processes , then restart Missing stuff
+        #
+##-------------------
+        #
+        unset b1 a1
+        b1="`check_proc_mysqld`"
+        a1="1"
+        export a1 b1
+
+        if [ "$a1" -le "$b1" ]; then
+
+
+                echo "OK: mysql "
+                $0      check_status
+        else
+                echo "ERROR: mysql down"
+                $0  check_status
+                #
+                restart_mysqld
+        fi
+##-------------------
+        unset b1 a1
+        b2=`check_proc_ndbd`
+        a2=2
+        export a2 b2
+
+        if [ "$a2" -le "$b2" ]; then
+
+                echo "OK: ndbd "
+               $0  check_status
+        else
+                echo "ERROR ndbd down"
+                $0  check_status
+        #restart_ndbd
+        fi
+##-------------------
+        ;;
+
+check_status)
+        echo ---------------------------------
+        date
+        echo ""
+        echo Checking NDB
+        check_ndbd
+        echo ---------------------------------
+        echo Checking MYSQLD
+        check_mysqld
+        echo ""
+        ;;
+debug)
+        echo ---------------------------------
+        date
+        echo ""
+        echo Checking NDB
+        check_ndbd
+        echo ---------------------------------
+        echo Checking MYSQLD
+        check_mysqld
+        echo ""
+
+        ;;
+
+*)      echo "Usage: $0 {start_mgmd|start_ndb|start_mysqld|check_status|check_mysqld|check_ndbd|check_ndb_mgmd|debug|restart_mysqld|restart_ndbd|stop_mgmd|stop_ndb|stop_mysqld|cronchecks}"
+        ;;
+esac
+exit 0
