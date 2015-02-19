@@ -1,0 +1,5 @@
+#
+#mysql user crontab
+#
+# NDB Cluster check for mysql and ndb
+*/15 * * * * /usr/local/mysql/mysql-cluster/extra/check_ndbd_procs > /var/log/mysql/check_ndbd_procs.log 2>&1
