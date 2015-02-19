@@ -5,4 +5,9 @@
 #
 # restart it every sunday - memory cleanup
 0 3 * * 0 /usr/local/mysql/mysql-cluster/extra/check_ndbd_procs restart_mysqld > /var/log/mysql/check_ndbd_procs.log 2>&1
+#
+# place here your backup mysql script
+0 3 * * 0 /usr/local/mysql/mysql-cluster/extra/ndbd_node_backup  > /var/log/mysql/ndbd_backup 2>&1
+
+
 
