@@ -1,5 +1,8 @@
-#
 #mysql user crontab
 #
 # NDB Cluster check for mysql and ndb
-*/15 * * * * /usr/local/mysql/mysql-cluster/extra/check_ndbd_procs > /var/log/mysql/check_ndbd_procs.log 2>&1
+*/15 * * * * /usr/local/mysql/mysql-cluster/extra/check_ndbd_procs cronchecks > /var/log/mysql/check_ndbd_procs.log 2>&1
+#
+# restart it every sunday - memory cleanup
+0 3 * * 0 /usr/local/mysql/mysql-cluster/extra/check_ndbd_procs restart_mysqld > /var/log/mysql/check_ndbd_procs.log 2>&1
+
