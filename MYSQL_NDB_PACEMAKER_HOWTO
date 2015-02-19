@@ -1,0 +1,316 @@
+
+Pacemaker, please meet NDB Cluster or using Pacemaker/Heartbeat to start a NDB Cluster
+http://www.percona.com/blog/2010/05/19/pacemaker-please-meet-ndb-cluster-or-using-pacemakerheartbeat-to-start-a-ndb-cluster/
+
+
+ PREVIOUS POST
+NEXT POST
+
+Customers have always asked me to make NDB Cluster starts automatically upon startup of the servers. For the ones who know NDB Cluster, it is tricky to make it starts automatically. I know at least 2 sets of scripts to manage NDB startup, ndb-initializer and from Johan configurator www.severalnines.com. If all the nodes come up at about the same time, it is not too bad but what if one the critical node takes much longer to start because of an fsck on a large ext3 partition. Then, a startup script becomes a nightmare. Finally, if the box on which the script is supposed to run didn’t start at all. That’s a lot of rules to handle.
+
+Since all aspects of HA interest me, I was recently reading the Pacemaker documentation and I realized that Pacemaker has all the logic required to manage NDB Cluster startup. Okay it might seems weird to control a cluster by cluster but if you think about it, this is, I think, the best solution.
+
+The Linux-HA project has split the old Heartbeat-2 project in 2 parts, the clustering and communication layer, Heartbeat and the resources manager, Pacemaker. A key new features that has been added to Pacemaker recently, a Clone resources set, that allows an optional startup if only one of 2 similar resources starts. I use this feature to start the data nodes. If after a major outage, only one of the physical host where the data nodes are located comes up, the cluster will start. The other features of Pacemaker that I need are resource location rsc_location and resource ordering rsc_order.
+
+Let’s start by the beginning. My NDB cluster is made of the following 3 nodes:
+
+    testvirtbox: ndb_mgmd (10.2.2.139)
+    test1: ndbd
+    test2: ndbd
+
+For the sake of simplicity, I am not considering the SQL nodes but given the framework, extending to SQL nodes is trivial. Installing Pacemaker and Heartbeat is very easy on Lucid Lynx, just do the following:
+Shell
+apt-get install heartbeat pacemaker
+1
+	
+apt-get install heartbeat pacemaker
+
+On other distributions, you might have to build from sources, look here for help.
+
+There 2 minimal configuration files:
+Shell
+root@test2:~# cat /etc/ha.d/authkeys auth 1 1 sha1 yves root@test2:~# cat /etc/ha.d/ha.cf autojoin none bcast eth0 warntime 5 deadtime 15 initdead 60 keepalive 2 node test1 node test2 node testvirtbox crm respawn
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+	
+root@test2:~# cat /etc/ha.d/authkeys
+auth 1
+1 sha1  yves
+root@test2:~# cat /etc/ha.d/ha.cf
+autojoin none
+bcast eth0
+warntime 5
+deadtime 15
+initdead 60
+keepalive 2
+node test1
+node test2
+node testvirtbox
+crm respawn
+
+And then, Heartbeat can be started on all nodes with /etc/init.d/heartbeat start.
+
+Next, since Pacemaker is used to start resources and not to manage them, we don’t need to define Stonith devices so (run on only one node):
+Shell
+crm_attribute -t crm_config -n stonith-enabled -v false
+1
+	
+crm_attribute -t crm_config -n stonith-enabled -v false
+
+A last before defining resources, since the Heartbeat cluster is asymmetrical, meaning resources will not be able to run anywhere, we must create an “Opt-In” cluster with (run on only one node):
+Shell
+crm_attribute --attr-name symmetric-cluster --attr-value false
+1
+	
+crm_attribute --attr-name symmetric-cluster --attr-value false
+
+At this point, we have a running cluster controlling nothing. The trick with NDB Cluster is that Heartbeat is required to start the resources but not to stop them. In order to achieve this behavior, I created fake resource scripts that can be fully controlled by Heartbeat but allowing the one way behavior I wanted.
+
+Shell
+root@testvirtbox:~# cat /usr/local/bin/fake_ndb_mgmd #!/bin/bash /usr/bin/nohup /usr/local/mysql/libexec/ndb_mgmd > /dev/null & while [ 1 ] do /bin/sleep 60 done root@testvirtbox:~# cat /usr/local/bin/fake_ndb_cluster_start #!/bin/bash #Give some time to the nodes to connect /bin/sleep 15 /usr/local/mysql/bin/ndb_mgm -e 'all start' > /dev/null while [ 1 ] do /bin/sleep 60 done root@test1:~# cat /usr/local/bin/fake_ndbd #!/bin/bash #Give some time to ndb_mgmd to start /bin/sleep 10 nohup /usr/local/mysql/libexec/ndbd -c 10.2.2.139 > /dev/null & while [ 1 ] do sleep 60 done
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+	
+root@testvirtbox:~# cat /usr/local/bin/fake_ndb_mgmd
+#!/bin/bash
+ 
+/usr/bin/nohup /usr/local/mysql/libexec/ndb_mgmd > /dev/null &
+ 
+while [ 1 ]
+do
+        /bin/sleep 60
+done
+ 
+root@testvirtbox:~# cat /usr/local/bin/fake_ndb_cluster_start
+#!/bin/bash
+ 
+#Give some time to the nodes to connect
+/bin/sleep 15
+ 
+/usr/local/mysql/bin/ndb_mgm -e 'all start' > /dev/null
+ 
+while [ 1 ]
+do
+        /bin/sleep 60
+done
+ 
+root@test1:~# cat /usr/local/bin/fake_ndbd
+#!/bin/bash
+ 
+#Give some time to ndb_mgmd to start
+/bin/sleep 10
+ 
+nohup /usr/local/mysql/libexec/ndbd -c 10.2.2.139 > /dev/null &
+ 
+while [ 1 ]
+do
+        sleep 60
+done
+
+With Pacemaker it is not longer required to manipulate the cib in xml format but for this post, xml offers a compact way of presenting the configuration. The first things we need to define are the resources. A very handy resource type for us is the anything resource which allow an arbitrary script or binary to be run. The resources section will look like:
+
+Shell
+<resources> <primitive id="mgmd" class="ocf" type="anything" provider="heartbeat"> <instance_attributes id="params-mgmd"> <nvpair id="param-mgmd-binfile" name="binfile" value="/usr/local/bin/fake_ndb_mgmd"/> <nvpair id="param-mgmd-pidnile" name="pidfile" value="/var/run/heartbeat/fake_ndb_mgmd.pid"/> </instance_attributes> </primitive> <clone id="ndbdclone"> <meta_attributes id="ndbdclone-options"> <nvpair id="ndbdclone-option-1" name="globally-unique" value="false"/> <nvpair id="ndbdclone-option-2" name="clone-max" value="2"/> <nvpair id="ndbdclone-option-3" name="clone-node-max" value="1"/> </meta_attributes> <primitive id="ndbd" class="ocf" type="anything" provider="heartbeat"> <instance_attributes id="params-ndbd"> <nvpair id="param-ndbd-binfile" name="binfile" value="/usr/local/bin/fake_ndbd"/> <nvpair id="param-ndbd-pidfile" name="pidfile" value="/var/run/heartbeat/fake_ndbd.pid"/> </instance_attributes> </primitive> </clone> <primitive id="ndbcluster" class="ocf" type="anything" provider="heartbeat"> <instance_attributes id="params-ndbcluster"> <nvpair id="param-ndbcluster-binfile" name="binfile" value="/usr/local/bin/fake_ndb_cluster_start"/> <nvpair id="param-ndbcluster-pidfile" name="pidfile" value="/var/run/heartbeat/fake_ndb_cluster_start.pid"/> </instance_attributes> </primitive> </resources>
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+	
+    <resources>
+      <primitive id="mgmd" class="ocf" type="anything" provider="heartbeat">
+        <instance_attributes id="params-mgmd">
+          <nvpair id="param-mgmd-binfile" name="binfile" value="/usr/local/bin/fake_ndb_mgmd"/>
+          <nvpair id="param-mgmd-pidnile" name="pidfile" value="/var/run/heartbeat/fake_ndb_mgmd.pid"/>
+        </instance_attributes>
+      </primitive>
+      <clone id="ndbdclone">
+        <meta_attributes id="ndbdclone-options">
+          <nvpair id="ndbdclone-option-1" name="globally-unique" value="false"/>
+          <nvpair id="ndbdclone-option-2" name="clone-max" value="2"/>
+          <nvpair id="ndbdclone-option-3" name="clone-node-max" value="1"/>
+        </meta_attributes>
+        <primitive id="ndbd" class="ocf" type="anything" provider="heartbeat">
+          <instance_attributes id="params-ndbd">
+            <nvpair id="param-ndbd-binfile" name="binfile" value="/usr/local/bin/fake_ndbd"/>
+            <nvpair id="param-ndbd-pidfile" name="pidfile" value="/var/run/heartbeat/fake_ndbd.pid"/>
+          </instance_attributes>
+        </primitive>
+      </clone>
+      <primitive id="ndbcluster" class="ocf" type="anything" provider="heartbeat">
+        <instance_attributes id="params-ndbcluster">
+          <nvpair id="param-ndbcluster-binfile" name="binfile" value="/usr/local/bin/fake_ndb_cluster_start"/>
+          <nvpair id="param-ndbcluster-pidfile" name="pidfile" value="/var/run/heartbeat/fake_ndb_cluster_start.pid"/>
+        </instance_attributes>
+      </primitive>
+    </resources>
+
+Please note the ndbd resource is defined through the use of a clone set. The clone set will allow the cluster to start even if only one to the ndb node group is available. If you have multiple ndb node groups, you’ll need one clone set per node group. The ndb_mgmd nodes or eventual SQL nodes could have been handled the same way although for SQL nodes, ndb_waiter is very handy. Once the resources are defined, we need to setup the constraints which cover mandatory locations and ordering.
+
+Shell
+<constraints> <rsc_location id="loc-1" rsc="mgmd" node="testvirtbox" score="INFINITY"/> <rsc_location id="loc-2" rsc="ndbcluster" node="testvirtbox" score="INFINITY"/> <rsc_location id="loc-3" rsc="ndbdclone" node="test1" score="INFINITY"/> <rsc_location id="loc-4" rsc="ndbdclone" node="test2" score="INFINITY"/> <rsc_order id="order-1"> <resource_set id="ordered-set-1" sequential="true"> <resource_ref id="mgmd"/> <resource_ref id="ndbdclone"/> <resource_ref id="ndbcluster"/> </resource_set> </rsc_order> </constraints>
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+	
+    <constraints>
+      <rsc_location id="loc-1" rsc="mgmd" node="testvirtbox" score="INFINITY"/>
+      <rsc_location id="loc-2" rsc="ndbcluster" node="testvirtbox" score="INFINITY"/>
+      <rsc_location id="loc-3" rsc="ndbdclone" node="test1" score="INFINITY"/>
+      <rsc_location id="loc-4" rsc="ndbdclone" node="test2" score="INFINITY"/>
+      <rsc_order id="order-1">
+        <resource_set id="ordered-set-1" sequential="true">
+          <resource_ref id="mgmd"/>
+          <resource_ref id="ndbdclone"/>
+          <resource_ref id="ndbcluster"/>
+        </resource_set>
+      </rsc_order>
+    </constraints>
+
+And… that’s it. For my part, I configured Pacemaker by dumping the cib in xml format, editing and reloading. In term of commands, it means:
+Shell
+cibadmin --query > local.xml vi local.xml cibadmin --replace --xml-file local.xml
+1
+2
+3
+	
+cibadmin --query > local.xml
+vi  local.xml
+cibadmin  --replace --xml-file local.xml
+
+Once NDB is started, you can even stop heartbeat, it is no longer required.
+
+P.S.:
+
+As suggested by Florian, here is the configuration in CLI format:
+
+Shell
+root@testvirtbox:~# crm configure show INFO: building help index INFO: object order-1 cannot be represented in the CLI notation node $id="27687295-f72c-49bd-b82d-25f32dbfe1e2" test2 node $id="3086852d-abb9-4bdb-93a1-9390e14c148c" test1 node $id="cad7f678-fc91-4f09-a39e-1dde6d5bcd30" testvirtbox primitive mgmd ocf:heartbeat:anything \ params binfile="/usr/local/bin/fake_ndb_mgmd" pidfile="/var/run/heartbeat/fake_ndb_mgmd.pid" primitive ndbcluster ocf:heartbeat:anything \ params binfile="/usr/local/bin/fake_ndb_cluster_start" pidfile="/var/run/heartbeat/fake_ndb_cluster_start.pid" primitive ndbd1-IP ocf:heartbeat:anything \ params binfile="/usr/local/bin/fake_ndbd" pidfile="/var/run/heartbeat/fake_ndbd.pid" clone ndbdclone ndbd1-IP \ meta globally-unique="false" clone-max="2" clone-node-max="1" location loc-1 mgmd inf: testvirtbox location loc-2 ndbcluster inf: testvirtbox location loc-3 ndbdclone inf: test1 location loc-4 ndbdclone inf: test2 xml <rsc_order id="order-1"> \ <resource_set id="ordered-set-1" sequential="true"> \ <resource_ref id="mgmd"/> \ <resource_ref id="ndbdclone"/> \ <resource_ref id="ndbcluster"/> \ </resource_set> \ </rsc_order>
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+	
+root@testvirtbox:~# crm configure show
+INFO: building help index
+INFO: object order-1 cannot be represented in the CLI notation
+node $id="27687295-f72c-49bd-b82d-25f32dbfe1e2" test2
+node $id="3086852d-abb9-4bdb-93a1-9390e14c148c" test1
+node $id="cad7f678-fc91-4f09-a39e-1dde6d5bcd30" testvirtbox
+primitive mgmd ocf:heartbeat:anything \
+        params binfile="/usr/local/bin/fake_ndb_mgmd" pidfile="/var/run/heartbeat/fake_ndb_mgmd.pid"
+primitive ndbcluster ocf:heartbeat:anything \
+        params binfile="/usr/local/bin/fake_ndb_cluster_start" pidfile="/var/run/heartbeat/fake_ndb_cluster_start.pid"
+primitive ndbd1-IP ocf:heartbeat:anything \
+        params binfile="/usr/local/bin/fake_ndbd" pidfile="/var/run/heartbeat/fake_ndbd.pid"
+clone ndbdclone ndbd1-IP \
+        meta globally-unique="false" clone-max="2" clone-node-max="1"
+location loc-1 mgmd inf: testvirtbox
+location loc-2 ndbcluster inf: testvirtbox
+location loc-3 ndbdclone inf: test1
+location loc-4 ndbdclone inf: test2
+xml <rsc_order id="order-1"> \
+        <resource_set id="ordered-set-1" sequential="true"> \
+                <resource_ref id="mgmd"/> \
+                <resource_ref id="ndbdclone"/> \
+                <resource_ref id="ndbcluster"/> \
+        </resource_set> \
+</rsc_order>
