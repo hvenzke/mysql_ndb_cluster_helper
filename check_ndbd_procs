@@ -35,17 +35,17 @@ test -x /bin/bash || echo " $0 usage require /bin/bash "
 #--------------------------------------
 function start_ndb_mgmd {
         #
-        su - mysql -c 'cd /usr/local/mysql/mysql-cluster; /usr/local/mysql/mysql-cluster/start_mgmd.sh'
+        sudo su - mysql -c 'cd /usr/local/mysql/mysql-cluster; /usr/local/mysql/mysql-cluster/start_mgmd.sh'
 }
 
 function start_mysqld {
         #
-        su - mysql -c 'cd /usr/local/mysql/mysql-cluster; /usr/local/mysql/mysql-cluster/start_mysqld.sh'
+        sudo su - mysql -c 'cd /usr/local/mysql/mysql-cluster; /usr/local/mysql/mysql-cluster/start_mysqld.sh'
 }
 
 function start_ndbd {
         #
-        su - mysql -c 'cd /usr/local/mysql/mysql-cluster; /usr/local/mysql/mysql-cluster/start_ndbd.sh'
+        sudo su - mysql -c 'cd /usr/local/mysql/mysql-cluster; /usr/local/mysql/mysql-cluster/start_ndbd.sh'
 }
 
 #--------------------------------------
