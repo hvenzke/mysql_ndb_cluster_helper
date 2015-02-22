@@ -1,7 +1,7 @@
 
 #!/bin/bash
 #
-# check_ndbd_procs v0.34
+# check_ndbd_procs v0.35
 #
 # Copyright (c) 1995-2015 Remsnet Consulting & Internet Services LTD
 # Author:  Remsnet LTD Support <support at remsnet dot de>
